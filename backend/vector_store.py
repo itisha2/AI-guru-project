@@ -22,7 +22,7 @@ def _get_embeddings() -> HuggingFaceEmbeddings:
     if _embeddings_cache is None:
         _embeddings_cache = HuggingFaceEmbeddings(
             model_name=EMBEDDING_MODEL,
-            model_kwargs={"device": "cpu"},
+            model_kwargs={"device": "cpu", "trust_remote_code": True},
             encode_kwargs={"normalize_embeddings": True},
         )
     return _embeddings_cache

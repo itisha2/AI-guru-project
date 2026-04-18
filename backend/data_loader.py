@@ -812,8 +812,14 @@ def load_all_documents(force: bool = False) -> List[Document]:
         )
 
     # ── Merge all sources by (chapter, verse) ─────────────────────────────
+    # Keep individual verse docs so ChromaDB has both merged AND per-source views
+    individual_verse_docs = [
+        d for d in all_docs if d.metadata.get("chapter", 0) != 0
+    ]
     print("\nMerging documents by chapter + verse …")
-    all_docs = _merge_by_verse(all_docs)
+    all_docs = _merge_by_verse(all_docs)          # merged + Q&A
+    all_docs = all_docs + individual_verse_docs   # + individual verse docs
+    print(f"  Total after adding individual verse docs: {len(all_docs)}")
 
     # ── Cache processed documents ──────────────────────────────────────────
     serialised = [

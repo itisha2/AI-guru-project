@@ -37,7 +37,7 @@ def _get_llm() -> ChatGroq:
         _llm = ChatGroq(
             model=LLM_MODEL,
             temperature=0.7,
-            max_tokens=512,
+            max_tokens=1024,
             api_key=GROQ_API_KEY,
         )
     return _llm
@@ -53,7 +53,7 @@ class GururState(TypedDict):
 
 # ─── Shared helpers ──────────────────────────────────────────────────────────
 
-_CONTEXT_CHARS = 400  # max chars per passage sent to the LLM
+_CONTEXT_CHARS = 500  # max chars per passage sent to the LLM
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
@@ -62,7 +62,7 @@ def _clean_response(text: str) -> str:
     return _THINK_RE.sub("", text).strip()
 
 
-def _fetch_docs(query: str, k: int = 3) -> List[Dict[str, Any]]:
+def _fetch_docs(query: str, k: int = 5) -> List[Dict[str, Any]]:
     """Retrieve top-k passages using the cached vector store."""
     results = get_vector_store().similarity_search_with_score(query, k=k)
     return [
@@ -70,6 +70,7 @@ def _fetch_docs(query: str, k: int = 3) -> List[Dict[str, Any]]:
             "content": doc.page_content,
             "metadata": doc.metadata,
             "score": float(score),
+            "id": getattr(doc, "id", None),
         }
         for doc, score in results
     ]
@@ -101,7 +102,7 @@ def _retrieve(state: GururState) -> Dict[str, Any]:
     query = state["messages"][-1].content
     if not collection_exists():
         return {"retrieved_docs": [], "query": query}
-    return {"retrieved_docs": _fetch_docs(query, k=3), "query": query}
+    return {"retrieved_docs": _fetch_docs(query, k=5), "query": query}
 
 
 def _generate(state: GururState) -> Dict[str, Any]:
@@ -155,7 +156,7 @@ def retrieve_docs(question: str) -> tuple[List[Dict[str, Any]], str]:
     Retrieve relevant passages without running the full graph.
     Returns (docs, query). Fast — uses cached vector store.
     """
-    return _fetch_docs(question, k=3), question
+    return _fetch_docs(question, k=5), question
 
 
 def stream_guru(

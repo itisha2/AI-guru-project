@@ -144,11 +144,19 @@ def _render_provenance(query: str, docs: list, turn_key: str) -> None:
                         delta=f"{sbadge} {'High' if score > 0.7 else 'Medium' if score > 0.5 else 'Low'}",
                         delta_color="off",
                     )
+                    doc_id = doc.get("id") or ""
+                    if doc_id:
+                        st.markdown(
+                            f'<a href="/ChromaDB_Browser?doc_id={doc_id}" target="_blank" '
+                            f'style="font-size:0.75rem;">🔗 View in Browser</a>',
+                            unsafe_allow_html=True,
+                        )
+                        st.caption(f"`{doc_id[:20]}…`")
                 with col_b:
                     st.markdown(
                         f"**{loc}**  \n"
                         f"**Sources:** {source_badges}  \n"
-                        f"**Preview:** {doc['content'][:200]}{'…' if len(doc['content']) > 200 else ''}"
+                        f"**Preview:** {doc['content'][:300]}{'…' if len(doc['content']) > 300 else ''}"
                     )
                 if rank < len(sorted_docs):
                     st.divider()

@@ -105,7 +105,8 @@ with st.sidebar:
 
     st.divider()
     st.header("Jump to Document ID")
-    doc_id_input = st.text_input("ChromaDB ID", placeholder="Paste a document ID …")
+    _prefill_id = st.query_params.get("doc_id", "")
+    doc_id_input = st.text_input("ChromaDB ID", value=_prefill_id, placeholder="Paste a document ID …")
 
 
 # ─── Build `where` filter ────────────────────────────────────────────────────
