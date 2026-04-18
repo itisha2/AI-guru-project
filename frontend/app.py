@@ -12,12 +12,12 @@ import streamlit as st
 
 st.set_page_config(
     page_title="AI Guru",
-    page_icon="🪔",
+    page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("🪔 AI Guru")
+st.title("AI Guru")
 st.subheader("A handy philosopher in your pocket")
 
 st.markdown(

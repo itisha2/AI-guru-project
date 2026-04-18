@@ -10,16 +10,33 @@ from typing import List, Optional
 import chromadb
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_ollama import OllamaEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
-from .config import CHROMA_COLLECTION_NAME, CHROMA_DB_DIR, EMBEDDING_MODEL, OLLAMA_BASE_URL
+from .config import CHROMA_COLLECTION_NAME, CHROMA_DB_DIR, EMBEDDING_MODEL
+
+_embeddings_cache: HuggingFaceEmbeddings | None = None
 
 
-def _get_embeddings() -> OllamaEmbeddings:
-    return OllamaEmbeddings(
-        model=EMBEDDING_MODEL,
-        base_url=OLLAMA_BASE_URL,
-    )
+def _get_embeddings() -> HuggingFaceEmbeddings:
+    global _embeddings_cache
+    if _embeddings_cache is None:
+        _embeddings_cache = HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL,
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True},
+        )
+    return _embeddings_cache
+
+
+_vs_cache: Optional[Chroma] = None
+
+
+def get_vector_store() -> Chroma:
+    """Return a cached Chroma instance (created once per process)."""
+    global _vs_cache
+    if _vs_cache is None:
+        _vs_cache = load_vector_store()
+    return _vs_cache
 
 
 def create_vector_store(documents: List[Document], batch_size: int = 100) -> Chroma:
@@ -64,8 +81,7 @@ def get_retriever(k: int = 5):
 
 def similarity_search_with_scores(query: str, k: int = 5):
     """Return (Document, score) pairs for a query."""
-    vs = load_vector_store()
-    return vs.similarity_search_with_score(query, k=k)
+    return get_vector_store().similarity_search_with_score(query, k=k)
 
 
 def collection_exists() -> bool:
@@ -86,6 +102,52 @@ def get_raw_embeddings():
     client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
     col = client.get_collection(CHROMA_COLLECTION_NAME)
     return col.get(include=["embeddings", "documents", "metadatas"])
+
+
+def browse_collection(
+    offset: int = 0,
+    limit: int = 50,
+    where: Optional[dict] = None,
+    keyword: Optional[str] = None,
+) -> dict:
+    """
+    Paginated browse of the ChromaDB collection.
+
+    Returns dict with:
+      - documents: list of page_content strings
+      - metadatas: list of metadata dicts
+      - ids: list of document IDs
+      - total: total documents matching the filter (before pagination)
+    """
+    client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
+    col = client.get_collection(CHROMA_COLLECTION_NAME)
+
+    get_kwargs: dict = {"include": ["documents", "metadatas"]}
+    if where:
+        get_kwargs["where"] = where
+
+    result = col.get(**get_kwargs)
+    docs = result["documents"]
+    metas = result["metadatas"]
+    ids = result["ids"]
+
+    # keyword filter on page content (client-side)
+    if keyword:
+        kw = keyword.lower()
+        filtered = [
+            (d, m, i) for d, m, i in zip(docs, metas, ids)
+            if kw in (d or "").lower()
+        ]
+        docs, metas, ids = zip(*filtered) if filtered else ([], [], [])
+        docs, metas, ids = list(docs), list(metas), list(ids)
+
+    total = len(docs)
+    return {
+        "documents": docs[offset : offset + limit],
+        "metadatas": metas[offset : offset + limit],
+        "ids": ids[offset : offset + limit],
+        "total": total,
+    }
 
 
 def collection_stats() -> dict:

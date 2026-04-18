@@ -1,5 +1,5 @@
 """
-Knowledge Base page — browse and search all six indexed Gita datasets.
+Knowledge Base page — browse and search all seven indexed Gita datasets.
 """
 
 from __future__ import annotations
@@ -38,17 +38,18 @@ st.divider()
 
 st.subheader("Indexed Datasets")
 st.caption(
-    "All six Gita datasets are merged into a single ChromaDB collection. "
+    "All seven Gita datasets are merged into a single ChromaDB collection. "
     "Each document retains its `source` tag so the Guru can attribute answers."
 )
 
 _SOURCE_ICONS = {
-    "gita_yaml":        "🟩",
-    "alpaca_qa":        "🟦",
-    "pranesh_json":     "🟧",
-    "jdhruv14_qa":      "🟪",
-    "utkarsh_gita":     "🟥",
-    "modotte_infinity": "🟨",
+    "gita_yaml":         "🟩",
+    "alpaca_qa":         "🟦",
+    "pranesh_json":      "🟧",
+    "jdhruv14_qa":       "🟪",
+    "utkarsh_gita":      "🟥",
+    "modotte_infinity":  "🟨",
+    "jdhruv14_dataset":  "🟫",
 }
 
 _TYPE_ICONS = {
@@ -128,7 +129,7 @@ st.divider()
 
 st.subheader("🔍 Semantic Search")
 st.caption(
-    "Search across all six datasets simultaneously using natural language. "
+    "Search across all seven datasets simultaneously using natural language. "
     "Returns the most semantically similar passages ranked by cosine similarity."
 )
 

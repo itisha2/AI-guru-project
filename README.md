@@ -311,40 +311,70 @@ Metadata: `source`, `chapter`, `verse`, `source_label`
 
 ## How Indexing Works
 
+### Pipeline
+
 ```
 Raw data (YAML / JSON / HuggingFace)
            │
            ▼
-   data_loader.py
-   ├── _parse_gita_yaml_dir()      Dataset 1
-   ├── _parse_alpaca_json()        Dataset 2
-   ├── _parse_pranesh_json()       Dataset 3
-   ├── _parse_jdhruv14_qa()        Dataset 4
-   ├── _parse_utkarsh_gita()       Dataset 5
-   └── _parse_modotte_infinity()   Dataset 6
+   data_loader.py  —  seven parsers
+   ├── _parse_gita_yaml_dir()       Dataset 1  →  verse-level  (chapter, verse)
+   ├── _parse_alpaca_json()         Dataset 2  →  Q&A          (chapter = 0)
+   ├── _parse_pranesh_json()        Dataset 3  →  verse-level  (chapter, verse)
+   ├── _parse_jdhruv14_qa()         Dataset 4  →  verse-linked (chapter_no, verse_no)
+   ├── _parse_utkarsh_gita()        Dataset 5  →  verse-level  (regex from text)
+   ├── _parse_modotte_infinity()    Dataset 6  →  verse-level  (when available)
+   └── _parse_jdhruv14_dataset()    Dataset 7  →  verse-level  (chapter, verse)
+           │
+           ▼
+   _merge_by_verse()
+   ├── Groups all docs by (chapter, verse)
+   ├── Merges content from all sources into one Document per unique verse
+   └── Q&A docs (chapter=0) kept as-is
            │
            ▼
    List[LangChain Document]
-   (page_content + metadata{source, chapter, verse, …})
+   (page_content + metadata{chapter, verse, sources, sanskrit, transliteration})
            │
            ▼
-   vector_store.create_vector_store()
-   ├── OllamaEmbeddings(nomic-embed-text)  ← 768-dim per document
-   └── Chroma.add_documents(batch_size=100)
+   OllamaEmbeddings(nomic-embed-text)  →  768-dim vector per document
            │
            ▼
    ChromaDB  →  persisted at data/chroma_db/
                 collection: "gita_knowledge"
 ```
 
-**Processed document cache:**
-After the first ingestion, all parsed documents are serialised to
-`data/processed/documents.json`. Subsequent runs load from this cache
-(skipping re-download and re-parsing) unless `--force` is passed.
+### Index organisation
 
-**HuggingFace dataset cache:**
-Each HuggingFace dataset is cached as a JSON file in `data/raw/` after the
-first download, so the `datasets` library is only invoked once.
+| Index key | Document type | Approximate count | Description |
+|-----------|--------------|-------------------|-------------|
+| `(chapter=N, verse=V)` | Merged verse | ~700 | One document per Gita verse. Content from all contributing datasets merged. Metadata: `chapter`, `verse`, `sources` (comma-separated), `sanskrit`, `transliteration`. |
+| `(chapter=0)` | Q&A / unlocated | ~6,300 | Standalone Q&A pairs not linked to a specific verse. Metadata: `source`, `question`. |
+
+**Total indexed:** ~7,000 documents
+
+**Embedding:** Each document's `page_content` is embedded as a single 768-dimensional
+vector using `nomic-embed-text` via Ollama. Similarity search uses **cosine distance**.
+
+**Merge strategy:** When multiple datasets cover the same verse (e.g. Ch. 2, V. 47),
+their translations and commentary are concatenated under labelled sections
+(`[source label]`) into one document. This means a single retrieval hit contains
+multiple perspectives on the verse.
+
+**Why merge by verse?**
+- Eliminates duplicate retrieval (without merging, the same verse from 4 sources
+  would occupy 4 of the top-5 results)
+- Richer context per retrieved document
+- Cleaner provenance — the Guru's answer is grounded in a specific verse, not a
+  fragment of one source's translation
+
+### Caches
+
+| Cache | Path | Purpose |
+|---|---|---|
+| Processed documents | `data/processed/documents.json` | Skip re-parsing on restart |
+| HuggingFace datasets | `data/raw/*.json` | Skip re-downloading from HF Hub |
+| ChromaDB index | `data/chroma_db/` | Persistent embedding store (survives restart) |
 
 ---
 

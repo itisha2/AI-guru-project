@@ -1,5 +1,5 @@
 """
-Loads and processes six Gita datasets into LangChain Documents.
+Loads and processes seven Gita datasets into LangChain Documents.
 
 Dataset index
 ─────────────
@@ -9,6 +9,7 @@ Dataset index
   4. JDhruv14/Bhagavad-Gita-QA (HuggingFace)            — question-answer pairs
   5. utkarshpophli/bhagwat_gita (HuggingFace)           — structured verse teachings
   6. Modotte/Bhagwat-Gita-Infinity (HuggingFace)        — extended verse content
+  7. JDhruv14/Bhagavad-Gita_Dataset (HuggingFace)       — verse-level structured dataset
 
 Each dataset is tagged with a `source` key in Document.metadata so the
 frontend can show full provenance.
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import List
 
@@ -317,6 +319,10 @@ def _parse_jdhruv14_qa(cache_dir: Path) -> List[Document]:
         if not answer:
             continue
 
+        # this dataset uses chapter_no / verse_no (not chapter_number)
+        chapter = int(item.get("chapter_no") or item.get("chapter_number") or item.get("chapter") or 0)
+        verse = str(item.get("verse_no") or item.get("verse_number") or item.get("verse") or f"qa_{i}")
+
         page_content = f"{question}\n\nAnswer: {answer}" if question else answer
 
         docs.append(
@@ -325,8 +331,8 @@ def _parse_jdhruv14_qa(cache_dir: Path) -> List[Document]:
                 metadata={
                     "source": "jdhruv14_qa",
                     "source_label": "JDhruv14/Bhagavad-Gita-QA (HuggingFace)",
-                    "chapter": 0,
-                    "verse": f"qa_{i}",
+                    "chapter": chapter,
+                    "verse": verse,
                     "question": question[:300],
                 },
             )
@@ -363,25 +369,33 @@ def _parse_utkarsh_gita(cache_dir: Path) -> List[Document]:
             print(f"  [WARN] utkarshpophli/bhagwat_gita loading failed: {e}")
             return docs
 
-    for item in tqdm(items, desc="  Parsing utkarshpophli gita"):
-        chapter = int(item.get("chapter_number") or item.get("chapter") or 0)
-        verse = str(item.get("verse_number") or item.get("verse") or "?")
+    _VERSE_RE = re.compile(r'verse\s+(\d+)\.(\d+)', re.IGNORECASE)
 
-        content = _pick(
-            item, "meaning", "translation", "commentary",
-            "text", "verse_text", "description", "output"
-        )
+    for i, item in enumerate(tqdm(items, desc="  Parsing utkarshpophli gita")):
+        # dataset has only a 'text' field in instruction-tuning format:
+        # "<s>[INST] ... verse X.Y ... [/INST] <answer>"
+        raw_text = _coerce_str(item.get("text", ""))
+
+        # extract chapter/verse from the instruction part
+        m = _VERSE_RE.search(raw_text)
+        if m:
+            chapter = int(m.group(1))
+            verse = str(int(m.group(2)))  # normalise "01" → "1"
+        else:
+            chapter = int(item.get("chapter_number") or item.get("chapter") or 0)
+            verse = str(item.get("verse_number") or item.get("verse") or f"ut_{i}")
+
+        # extract the answer portion (after [/INST])
+        if "[/INST]" in raw_text:
+            content = raw_text.split("[/INST]", 1)[1].strip()
+        else:
+            content = _pick(item, "meaning", "translation", "commentary",
+                            "text", "verse_text", "description", "output")
+
         if not content:
             continue
 
         page_content = f"Chapter {chapter}, Verse {verse}\n\n{content}"
-        sanskrit = _coerce_str(
-            item.get("text") or item.get("verse_text") or item.get("shlok", "")
-        )
-        transliteration = _coerce_str(
-            item.get("transliteration") or item.get("transliteration_of_verse", "")
-        )
-
         docs.append(
             Document(
                 page_content=page_content,
@@ -390,13 +404,82 @@ def _parse_utkarsh_gita(cache_dir: Path) -> List[Document]:
                     "source_label": "utkarshpophli/bhagwat_gita (HuggingFace)",
                     "chapter": chapter,
                     "verse": verse,
-                    "sanskrit": sanskrit[:200],
-                    "transliteration": transliteration[:200],
+                    "sanskrit": "",
+                    "transliteration": "",
                 },
             )
         )
 
     print(f"  Loaded {len(docs)} verses from utkarshpophli gita")
+    return docs
+
+
+# ── Dataset 7: JDhruv14/Bhagavad-Gita_Dataset (HuggingFace) ─────────────
+
+def _parse_jdhruv14_dataset(cache_dir: Path) -> List[Document]:
+    """
+    Load JDhruv14/Bhagavad-Gita_Dataset from HuggingFace.
+
+    Flexible column detection — handles verse-level and Q&A style rows.
+    """
+    docs: List[Document] = []
+    cache_file = cache_dir / "jdhruv14_dataset.json"
+
+    if cache_file.exists():
+        print(f"  Loading cached JDhruv14 Dataset from {cache_file.name} …")
+        items = json.loads(cache_file.read_text(encoding="utf-8"))
+    else:
+        try:
+            from datasets import load_dataset  # type: ignore
+            print("  Downloading JDhruv14/Bhagavad-Gita_Dataset from HuggingFace …")
+            ds = load_dataset("JDhruv14/Bhagavad-Gita_Dataset", split="train")
+            items = [dict(row) for row in ds]
+            cache_file.write_text(
+                json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception as e:
+            print(f"  [WARN] JDhruv14/Bhagavad-Gita_Dataset loading failed: {e}")
+            return docs
+
+    for i, item in enumerate(tqdm(items, desc="  Parsing JDhruv14 Dataset")):
+        chapter = int(item.get("chapter_number") or item.get("chapter") or 0)
+        verse = str(item.get("verse_number") or item.get("verse") or f"ds_{i}")
+
+        content = _pick(
+            item, "meaning", "translation", "commentary", "answer",
+            "output", "text", "verse_text", "description", "context"
+        )
+        if not content:
+            parts = [str(v) for v in item.values() if isinstance(v, str) and len(v) > 30]
+            content = " ".join(parts[:2])
+
+        if not content:
+            continue
+
+        question = _pick(item, "question", "instruction", "query", "input")
+        if question:
+            page_content = f"{question}\n\nAnswer: {content}"
+        elif chapter:
+            page_content = f"Chapter {chapter}, Verse {verse}\n\n{content}"
+        else:
+            page_content = content
+
+        docs.append(
+            Document(
+                page_content=page_content,
+                metadata={
+                    "source": "jdhruv14_dataset",
+                    "source_label": "JDhruv14/Bhagavad-Gita_Dataset (HuggingFace)",
+                    "chapter": chapter,
+                    "verse": verse,
+                    "sanskrit": _coerce_str(item.get("text", "") or item.get("shlok", ""))[:200],
+                    "transliteration": _coerce_str(item.get("transliteration", ""))[:200],
+                    "question": question[:300] if question else "",
+                },
+            )
+        )
+
+    print(f"  Loaded {len(docs)} entries from JDhruv14 Dataset")
     return docs
 
 
@@ -464,6 +547,95 @@ def _parse_modotte_infinity(cache_dir: Path) -> List[Document]:
 
     print(f"  Loaded {len(docs)} entries from Modotte infinity")
     return docs
+
+
+# ── Verse-level merge ─────────────────────────────────────────────────────
+
+def _merge_by_verse(docs: List[Document]) -> List[Document]:
+    """
+    Combine all documents for the same (chapter, verse) into one rich document.
+
+    Verse-located docs (chapter != 0) are grouped by (chapter, verse) and their
+    content from each source is joined under labelled sections.
+    Q&A / unlocated docs (chapter == 0) are kept as-is.
+    """
+    _VERSE_NUM_RE = re.compile(r'^\d+')
+
+    verse_groups: dict = defaultdict(list)
+    unlocated: List[Document] = []
+
+    for doc in docs:
+        chapter = doc.metadata.get("chapter", 0)
+        verse = str(doc.metadata.get("verse", "")).strip()
+
+        # skip docs with no real chapter
+        if not chapter or chapter == 0:
+            unlocated.append(doc)
+            continue
+
+        # normalise verse: "2.47" → "47", "047" → "47"
+        if "." in verse:
+            verse = verse.split(".")[-1]
+        m = _VERSE_NUM_RE.match(verse)
+        verse_key = str(int(m.group())) if m else verse
+
+        verse_groups[(int(chapter), verse_key)].append(doc)
+
+    merged: List[Document] = []
+
+    for (chapter, verse), group in sorted(verse_groups.items()):
+        parts: List[str] = []
+        sanskrit = ""
+        transliteration = ""
+        sources_used: List[str] = []
+
+        for doc in group:
+            source = doc.metadata.get("source", "unknown")
+            label = doc.metadata.get("source_label", source)
+            sources_used.append(source)
+
+            # strip redundant "Chapter N, Verse V\n\n" header from content
+            content = doc.page_content
+            for hdr in (
+                f"Chapter {chapter}, Verse {verse}\n\n",
+                f"Chapter {chapter}, Verse {int(verse):02d}\n\n",
+            ):
+                if content.startswith(hdr):
+                    content = content[len(hdr):]
+                    break
+
+            parts.append(f"**{label}**\n{content.strip()}")
+
+            if not sanskrit:
+                sanskrit = doc.metadata.get("sanskrit", "") or ""
+            if not transliteration:
+                transliteration = doc.metadata.get("transliteration", "") or ""
+
+        page_content = (
+            f"Chapter {chapter}, Verse {verse}\n\n"
+            + "\n\n---\n\n".join(parts)
+        )
+        merged.append(
+            Document(
+                page_content=page_content,
+                metadata={
+                    "chapter": chapter,
+                    "verse": verse,
+                    "source": "merged",
+                    "source_label": f"Merged ({len(set(sources_used))} sources)",
+                    "sources": ",".join(sorted(set(sources_used))),
+                    "sanskrit": sanskrit[:200],
+                    "transliteration": transliteration[:200],
+                },
+            )
+        )
+
+    total_input = sum(len(g) for g in verse_groups.values())
+    print(
+        f"  Merged {total_input} verse docs → {len(merged)} unique verses  "
+        f"| {len(unlocated)} Q&A/unlocated docs kept as-is"
+    )
+    return merged + unlocated
 
 
 # ── Public API ────────────────────────────────────────────────────────────
@@ -542,12 +714,24 @@ DATASET_REGISTRY = {
         "fields": "verse content with metadata",
         "index_key": "content text → embedded per entry",
     },
+    "jdhruv14_dataset": {
+        "label": "JDhruv14/Bhagavad-Gita_Dataset (HuggingFace)",
+        "url": "https://huggingface.co/datasets/JDhruv14/Bhagavad-Gita_Dataset",
+        "type": "Structured verse & Q&A dataset",
+        "description": (
+            "Verse-level structured dataset by JDhruv14 covering all 18 chapters. "
+            "Includes chapter/verse metadata, Sanskrit text, transliteration, "
+            "meanings, and optionally Q&A pairs — broadens retrieval recall."
+        ),
+        "fields": "chapter_number, verse_number, text, transliteration, meaning/answer (flexible)",
+        "index_key": "meaning or answer text → embedded per entry",
+    },
 }
 
 
 def load_all_documents(force: bool = False) -> List[Document]:
     """
-    Download all six datasets, parse them, and return combined Documents.
+    Download all seven datasets, parse them, and return combined Documents.
 
     Uses a processed cache (data/processed/documents.json) to avoid
     re-downloading on subsequent runs. Pass force=True to rebuild.
@@ -567,7 +751,7 @@ def load_all_documents(force: bool = False) -> List[Document]:
     all_docs: List[Document] = []
 
     # ── 1: gita/gita YAML ──────────────────────────────────────────────────
-    print("\n[Dataset 1/6] gita/gita GitHub YAML repo …")
+    print("\n[Dataset 1/7] gita/gita GitHub YAML repo …")
     gita_dest = RAW_DATA_DIR / "gita"
     try:
         _clone_or_pull(GITA_REPO_URL, gita_dest)
@@ -576,7 +760,7 @@ def load_all_documents(force: bool = False) -> List[Document]:
         print(f"  [WARN] gita repo loading failed: {e}")
 
     # ── 2: SatyaSanatan alpaca JSON ────────────────────────────────────────
-    print("\n[Dataset 2/6] SatyaSanatan alpaca JSON (HuggingFace) …")
+    print("\n[Dataset 2/7] SatyaSanatan alpaca JSON (HuggingFace) …")
     alpaca_dest = RAW_DATA_DIR / "Shrimad-bhagvad-gita.json"
     try:
         _download_file(ALPACA_JSON_URL, alpaca_dest)
@@ -585,7 +769,7 @@ def load_all_documents(force: bool = False) -> List[Document]:
         print(f"  [WARN] alpaca JSON loading failed: {e}")
 
     # ── 3: praneshp1org verse.json ─────────────────────────────────────────
-    print("\n[Dataset 3/6] praneshp1org/Bhagavad-Gita-JSON-data (GitHub) …")
+    print("\n[Dataset 3/7] praneshp1org/Bhagavad-Gita-JSON-data (GitHub) …")
     pranesh_dest = RAW_DATA_DIR / "pranesh_verse.json"
     try:
         _download_file(PRANESH_JSON_URL, pranesh_dest)
@@ -594,31 +778,42 @@ def load_all_documents(force: bool = False) -> List[Document]:
         print(f"  [WARN] pranesh JSON loading failed: {e}")
 
     # ── 4: JDhruv14/Bhagavad-Gita-QA ──────────────────────────────────────
-    print("\n[Dataset 4/6] JDhruv14/Bhagavad-Gita-QA (HuggingFace) …")
+    print("\n[Dataset 4/7] JDhruv14/Bhagavad-Gita-QA (HuggingFace) …")
     try:
         all_docs.extend(_parse_jdhruv14_qa(RAW_DATA_DIR))
     except Exception as e:
         print(f"  [WARN] JDhruv14 QA loading failed: {e}")
 
     # ── 5: utkarshpophli/bhagwat_gita ─────────────────────────────────────
-    print("\n[Dataset 5/6] utkarshpophli/bhagwat_gita (HuggingFace) …")
+    print("\n[Dataset 5/7] utkarshpophli/bhagwat_gita (HuggingFace) …")
     try:
         all_docs.extend(_parse_utkarsh_gita(RAW_DATA_DIR))
     except Exception as e:
         print(f"  [WARN] utkarshpophli gita loading failed: {e}")
 
     # ── 6: Modotte/Bhagwat-Gita-Infinity ──────────────────────────────────
-    print("\n[Dataset 6/6] Modotte/Bhagwat-Gita-Infinity (HuggingFace) …")
+    print("\n[Dataset 6/7] Modotte/Bhagwat-Gita-Infinity (HuggingFace) …")
     try:
         all_docs.extend(_parse_modotte_infinity(RAW_DATA_DIR))
     except Exception as e:
         print(f"  [WARN] Modotte infinity loading failed: {e}")
+
+    # ── 7: JDhruv14/Bhagavad-Gita_Dataset ────────────────────────────────
+    print("\n[Dataset 7/7] JDhruv14/Bhagavad-Gita_Dataset (HuggingFace) …")
+    try:
+        all_docs.extend(_parse_jdhruv14_dataset(RAW_DATA_DIR))
+    except Exception as e:
+        print(f"  [WARN] JDhruv14 Dataset loading failed: {e}")
 
     if not all_docs:
         raise RuntimeError(
             "No documents loaded from any dataset. "
             "Check your network connection and try again."
         )
+
+    # ── Merge all sources by (chapter, verse) ─────────────────────────────
+    print("\nMerging documents by chapter + verse …")
+    all_docs = _merge_by_verse(all_docs)
 
     # ── Cache processed documents ──────────────────────────────────────────
     serialised = [

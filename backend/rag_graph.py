@@ -4,24 +4,43 @@ LangGraph-based RAG pipeline with conversation memory.
 Graph topology:
     START → retrieve → generate → END
 
-State carries:
-  - messages      : full conversation history (HumanMessage / AIMessage)
-  - retrieved_docs: last retrieval result (list of {content, metadata, score})
-  - query         : most recent user question (for downstream display)
+Performance notes:
+  - ChatOllama and Chroma are cached at module level (not recreated per call)
+  - Context passed to LLM is capped at 400 chars per passage
+  - A separate stream_guru() path enables token-by-token streaming in the UI
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Dict, List, TypedDict
+from typing import Annotated, Any, Dict, Generator, List, TypedDict
+
+import re
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from .config import LLM_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT
-from .vector_store import collection_exists, similarity_search_with_scores
+from .config import GROQ_API_KEY, LLM_MODEL, SYSTEM_PROMPT
+from .vector_store import collection_exists, get_vector_store
+
+
+# ─── Module-level LLM cache ─────────────────────────────────────────────────
+
+_llm: ChatGroq | None = None
+
+
+def _get_llm() -> ChatGroq:
+    global _llm
+    if _llm is None:
+        _llm = ChatGroq(
+            model=LLM_MODEL,
+            temperature=0.7,
+            max_tokens=512,
+            api_key=GROQ_API_KEY,
+        )
+    return _llm
 
 
 # ─── State ──────────────────────────────────────────────────────────────────
@@ -32,17 +51,21 @@ class GururState(TypedDict):
     query: str
 
 
-# ─── Node helpers ───────────────────────────────────────────────────────────
+# ─── Shared helpers ──────────────────────────────────────────────────────────
 
-def _retrieve(state: GururState) -> Dict[str, Any]:
-    """Retrieve top-k relevant Gita passages for the latest user message."""
-    query = state["messages"][-1].content
+_CONTEXT_CHARS = 400  # max chars per passage sent to the LLM
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
-    if not collection_exists():
-        return {"retrieved_docs": [], "query": query}
 
-    results = similarity_search_with_scores(query, k=5)
-    docs = [
+def _clean_response(text: str) -> str:
+    """Strip DeepSeek R1-style <think>...</think> reasoning blocks."""
+    return _THINK_RE.sub("", text).strip()
+
+
+def _fetch_docs(query: str, k: int = 3) -> List[Dict[str, Any]]:
+    """Retrieve top-k passages using the cached vector store."""
+    results = get_vector_store().similarity_search_with_score(query, k=k)
+    return [
         {
             "content": doc.page_content,
             "metadata": doc.metadata,
@@ -50,49 +73,45 @@ def _retrieve(state: GururState) -> Dict[str, Any]:
         }
         for doc, score in results
     ]
-    return {"retrieved_docs": docs, "query": query}
+
+
+def _build_context_messages(docs: List[Dict[str, Any]]) -> list:
+    """Build the system context block from retrieved passages."""
+    if not docs:
+        return []
+    parts = []
+    for i, d in enumerate(sorted(docs, key=lambda x: x["score"], reverse=True), 1):
+        parts.append(f"[Insight {i}]\n{d['content'][:_CONTEXT_CHARS]}")
+    context_block = "\n\n---\n\n".join(parts)
+    return [
+        SystemMessage(
+            content=(
+                "Use the following philosophical insights to inform your response. "
+                "Do NOT quote them, reference them, or reveal their source. "
+                "Absorb the wisdom and express it entirely in your own voice:\n\n"
+                + context_block
+            )
+        )
+    ]
+
+
+# ─── Node helpers ───────────────────────────────────────────────────────────
+
+def _retrieve(state: GururState) -> Dict[str, Any]:
+    query = state["messages"][-1].content
+    if not collection_exists():
+        return {"retrieved_docs": [], "query": query}
+    return {"retrieved_docs": _fetch_docs(query, k=3), "query": query}
 
 
 def _generate(state: GururState) -> Dict[str, Any]:
-    """Generate a response grounded in retrieved Gita passages."""
-    llm = ChatOllama(
-        model=LLM_MODEL,
-        base_url=OLLAMA_BASE_URL,
-        temperature=0.7,
-    )
-
+    llm = _get_llm()
     docs = state.get("retrieved_docs", [])
-
-    # build context block from retrieved passages
-    context_parts = []
-    for d in docs:
-        meta = d["metadata"]
-        chapter = meta.get("chapter", "?")
-        verse = meta.get("verse", "?")
-        tag = (
-            f"[Gita Ch.{chapter} V.{verse}]"
-            if chapter != 0
-            else "[Gita Teaching]"
-        )
-        context_parts.append(f"{tag}\n{d['content']}")
-
-    messages_to_send: list = [SystemMessage(content=SYSTEM_PROMPT)]
-
-    if context_parts:
-        context_block = "\n\n---\n\n".join(context_parts)
-        messages_to_send.append(
-            SystemMessage(
-                content=(
-                    "Relevant passages from the Bhagavad Gita "
-                    "(use their wisdom to inform your response, "
-                    "but speak naturally — do not quote or cite them directly):\n\n"
-                    + context_block
-                )
-            )
-        )
-
-    messages_to_send.extend(state["messages"])
-
+    messages_to_send = (
+        [SystemMessage(content=SYSTEM_PROMPT)]
+        + _build_context_messages(docs)
+        + list(state["messages"])
+    )
     response = llm.invoke(messages_to_send)
     return {"messages": [response]}
 
@@ -100,55 +119,100 @@ def _generate(state: GururState) -> Dict[str, Any]:
 # ─── Graph factory ──────────────────────────────────────────────────────────
 
 def create_rag_graph():
-    """
-    Build and compile the LangGraph RAG pipeline.
-    Each call creates a fresh graph with an in-memory checkpointer.
-    The checkpointer enables per-thread conversation memory.
-    """
     graph = StateGraph(GururState)
-
     graph.add_node("retrieve", _retrieve)
     graph.add_node("generate", _generate)
-
     graph.add_edge(START, "retrieve")
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", END)
-
     memory = MemorySaver()
     return graph.compile(checkpointer=memory)
 
 
-# ─── Convenience wrapper ────────────────────────────────────────────────────
+# ─── Non-streaming wrapper (kept for compatibility) ──────────────────────────
 
-def ask_guru(
-    compiled_graph,
-    question: str,
-    thread_id: str,
-) -> Dict[str, Any]:
-    """
-    Invoke the graph for a given thread, return the AI reply and retrieved docs.
-
-    Returns:
-        {
-          "answer": str,
-          "retrieved_docs": list[dict],
-          "query": str,
-        }
-    """
+def ask_guru(compiled_graph, question: str, thread_id: str) -> Dict[str, Any]:
     config = {"configurable": {"thread_id": thread_id}}
-    state_input = {"messages": [HumanMessage(content=question)]}
-
-    result = compiled_graph.invoke(state_input, config=config)
-
-    # extract the last AIMessage
+    result = compiled_graph.invoke(
+        {"messages": [HumanMessage(content=question)]}, config=config
+    )
     answer = ""
     for msg in reversed(result["messages"]):
         if isinstance(msg, AIMessage):
-            answer = msg.content
+            answer = _clean_response(msg.content)
             break
-
     return {
         "answer": answer,
         "retrieved_docs": result.get("retrieved_docs", []),
         "query": result.get("query", question),
     }
+
+
+# ─── Streaming path ──────────────────────────────────────────────────────────
+
+def retrieve_docs(question: str) -> tuple[List[Dict[str, Any]], str]:
+    """
+    Retrieve relevant passages without running the full graph.
+    Returns (docs, query). Fast — uses cached vector store.
+    """
+    return _fetch_docs(question, k=3), question
+
+
+def stream_guru(
+    compiled_graph,
+    question: str,
+    thread_id: str,
+    docs: List[Dict[str, Any]],
+) -> Generator[str, None, None]:
+    """
+    Stream LLM tokens for a question given pre-fetched docs.
+
+    After the full response is produced the AIMessage is committed to the
+    LangGraph MemorySaver so conversation history is preserved.
+    """
+    llm = _get_llm()
+
+    # Reconstruct message history from the graph's checkpointed state
+    config = {"configurable": {"thread_id": thread_id}}
+    checkpoint = compiled_graph.get_state(config)
+    prior_messages: list = []
+    if checkpoint and checkpoint.values:
+        prior_messages = list(checkpoint.values.get("messages", []))
+
+    messages_to_send = (
+        [SystemMessage(content=SYSTEM_PROMPT)]
+        + _build_context_messages(docs)
+        + prior_messages
+        + [HumanMessage(content=question)]
+    )
+
+    full_response = []
+    buffer = ""
+    in_think = False
+    for chunk in llm.stream(messages_to_send):
+        if not chunk.content:
+            continue
+        buffer += chunk.content
+        full_response.append(chunk.content)
+
+        # suppress <think>...</think> blocks from the streamed UI output
+        if "<think>" in buffer:
+            in_think = True
+        if in_think:
+            if "</think>" in buffer:
+                in_think = False
+                # yield only what comes after the closing tag
+                after = buffer.split("</think>", 1)[1]
+                buffer = after
+                if after:
+                    yield after
+            # still inside think block — don't yield
+        else:
+            yield chunk.content
+            buffer = ""
+
+    # Persist the full turn into the graph's memory
+    compiled_graph.invoke(
+        {"messages": [HumanMessage(content=question), AIMessage(content="".join(full_response))]},
+        config=config,
+    )

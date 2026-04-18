@@ -1,10 +1,21 @@
 # Core LLM / LangChain
 langchain>=0.3.0
-langchain-ollama>=0.2.0
+langchain-huggingface>=0.1.0
 langchain-community>=0.3.0
 langchain-chroma>=0.1.4
 langgraph>=0.2.0
 langchain-core>=0.3.0
+
+# HuggingFace embeddings (local, no API)
+huggingface_hub>=0.24.0
+sentence-transformers>=3.0.0
+
+# Groq — free, fast LLM inference (Gemma, Llama, Mixtral)
+langchain-groq>=0.2.0
+
+# PyTorch CPU-only (lighter image for Render)
+torch>=2.2.0
+torchvision
 
 # Vector Store
 chromadb>=0.5.0
@@ -19,7 +30,7 @@ gitpython>=3.1.0
 pandas>=2.2.0
 numpy>=1.26.0
 
-# HuggingFace datasets (for datasets 4, 5, 6)
+# HuggingFace datasets (for ingestion)
 datasets>=2.14.0
 
 # Visualization

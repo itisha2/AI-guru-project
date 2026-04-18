@@ -16,7 +16,7 @@ import streamlit as st
 
 from backend.config import EMBEDDING_MODEL, LLM_MODEL
 from backend.data_loader import DATASET_REGISTRY
-from backend.rag_graph import ask_guru, create_rag_graph
+from backend.rag_graph import create_rag_graph, retrieve_docs, stream_guru
 from backend.vector_store import collection_exists
 
 st.set_page_config(page_title="Chat — AI Guru", page_icon="💬", layout="wide")
@@ -68,7 +68,8 @@ _SOURCE_COLORS = {
     "pranesh_json":     ("🟧", "#7f4f24"),
     "jdhruv14_qa":      ("🟪", "#4a0e8f"),
     "utkarsh_gita":     ("🟥", "#9b2226"),
-    "modotte_infinity": ("🟨", "#6d6a00"),
+    "modotte_infinity":  ("🟨", "#6d6a00"),
+    "jdhruv14_dataset":  ("🟫", "#5c3d2e"),
 }
 
 def _source_badge(source: str) -> str:
@@ -106,26 +107,34 @@ def _render_provenance(query: str, docs: list, turn_key: str) -> None:
 
         st.divider()
 
-        # Step 2 — Retrieved passages
-        st.markdown(f"##### Step 2 · Vector Retrieval (top-{len(docs)} passages)")
+        # Step 2 — Retrieved passages (sorted highest → lowest similarity)
+        sorted_docs = sorted(docs, key=lambda d: float(d.get("score", 0)), reverse=True)
+        st.markdown(f"##### Step 2 · Vector Retrieval (top-{len(sorted_docs)} passages, highest similarity first)")
 
-        if not docs:
+        if not sorted_docs:
             st.warning("No passages were retrieved — knowledge base may be empty.")
         else:
-            for rank, doc in enumerate(docs, 1):
+            for rank, doc in enumerate(sorted_docs, 1):
                 meta = doc["metadata"]
                 score = float(doc.get("score", 0))
                 chapter = meta.get("chapter", "?")
                 verse = meta.get("verse", "?")
                 source = meta.get("source", "unknown")
-                source_label = meta.get("source_label") or DATASET_REGISTRY.get(source, {}).get("label", source)
+                sources_str = meta.get("sources", source)
 
                 sbadge = _score_badge(score)
-                loc = (
-                    f"Ch. {chapter}, V. {verse}"
-                    if chapter and chapter != 0
-                    else f"Q&A entry"
-                )
+
+                # primary label: Chapter N · Verse V
+                if chapter and chapter != 0:
+                    loc = f"Chapter {chapter} · Verse {verse}"
+                else:
+                    loc = "Q&A entry"
+
+                # contributing source badges
+                source_badges = " ".join(
+                    _source_badge(s.strip())
+                    for s in sources_str.split(",") if s.strip()
+                ) if sources_str else _source_badge(source)
 
                 col_a, col_b = st.columns([1, 3])
                 with col_a:
@@ -137,11 +146,11 @@ def _render_provenance(query: str, docs: list, turn_key: str) -> None:
                     )
                 with col_b:
                     st.markdown(
-                        f"**Location:** {loc}  \n"
-                        f"**Dataset:** {_source_badge(source)}  \n"
+                        f"**{loc}**  \n"
+                        f"**Sources:** {source_badges}  \n"
                         f"**Preview:** {doc['content'][:200]}{'…' if len(doc['content']) > 200 else ''}"
                     )
-                if rank < len(docs):
+                if rank < len(sorted_docs):
                     st.divider()
 
         st.divider()
@@ -159,7 +168,7 @@ wisdom of these passages naturally — without citing chapter/verse numbers or q
         with st.expander("View context block sent to LLM", expanded=False):
             if docs:
                 context_parts = []
-                for d in docs:
+                for d in sorted_docs:
                     meta = d["metadata"]
                     ch = meta.get("chapter", "?")
                     vs = meta.get("verse", "?")
@@ -195,7 +204,7 @@ wisdom of these passages naturally — without citing chapter/verse numbers or q
 # ─── Render conversation history ──────────────────────────────────────────────
 
 for i, turn in enumerate(st.session_state.chat_history):
-    with st.chat_message(turn["role"], avatar="🧑" if turn["role"] == "user" else "🪔"):
+    with st.chat_message(turn["role"]):
         st.markdown(turn["content"])
         if (
             turn["role"] == "assistant"
@@ -232,31 +241,35 @@ if prefill:
     user_input = prefill
 
 if user_input:
-    with st.chat_message("user", avatar="🧑"):
+    with st.chat_message("user"):
         st.markdown(user_input)
     st.session_state.chat_history.append(
         {"role": "user", "content": user_input, "docs": [], "query": user_input}
     )
 
-    with st.chat_message("assistant", avatar="🪔"):
-        with st.spinner("The Guru is reflecting …"):
-            result = ask_guru(
+    with st.chat_message("assistant"):
+        with st.spinner("The digital agent is thinking..."):
+            retrieved, query = retrieve_docs(user_input)
+
+        # stream tokens as they arrive
+        answer = st.write_stream(
+            stream_guru(
                 st.session_state.graph,
                 user_input,
                 st.session_state.thread_id,
+                retrieved,
             )
-        st.markdown(result["answer"])
+        )
 
-        retrieved = result.get("retrieved_docs", [])
         if st.session_state.show_provenance:
-            _render_provenance(result.get("query", user_input), retrieved, "latest")
+            _render_provenance(query, retrieved, "latest")
 
     st.session_state.chat_history.append(
         {
             "role": "assistant",
-            "content": result["answer"],
+            "content": answer,
             "docs": retrieved,
-            "query": result.get("query", user_input),
+            "query": query,
         }
     )
     st.rerun()

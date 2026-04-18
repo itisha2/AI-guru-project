@@ -41,87 +41,44 @@ with tab1:
         "How a user question travels through the system to become a Guru response."
     )
 
-    nodes = [
-        (0.05, 0.5, "User\nQuestion", "#4A90D9", 40),
-        (0.22, 0.5, "Embedding\n(nomic-embed-text)", "#7B68EE", 40),
-        (0.40, 0.5, "ChromaDB\nVector Store", "#E86B4F", 50),
-        (0.58, 0.5, "Top-K\nRetrieval", "#50C878", 40),
-        (0.75, 0.5, "LLM\n(Mistral)", "#FFB347", 50),
-        (0.92, 0.5, "Guru\nResponse", "#4A90D9", 40),
-        # LangGraph memory loop
-        (0.75, 0.15, "LangGraph\nMemorySaver", "#C0C0C0", 35),
-    ]
-
-    edges = [
-        (0, 1, "encode query"),
-        (1, 2, "similarity search"),
-        (2, 3, "top-5 docs"),
-        (3, 4, "augmented prompt"),
-        (4, 5, "generate"),
-        (4, 6, "checkpoint"),
-        (6, 4, "history"),
-    ]
-
-    fig = go.Figure()
-
-    # draw edges as Scatter lines + arrowhead annotations using data coords
-    # (Plotly 6.x dropped axref='paper'; we use axref='x', ayref='y' instead)
-    for src_i, dst_i, label in edges:
-        x0, y0 = nodes[src_i][0], nodes[src_i][1]
-        x1, y1 = nodes[dst_i][0], nodes[dst_i][1]
-
-        # line segment
-        fig.add_trace(go.Scatter(
-            x=[x0, x1], y=[y0, y1],
-            mode="lines",
-            line=dict(color="#888", width=2),
-            showlegend=False,
-            hoverinfo="skip",
-        ))
-        # arrowhead at destination node
-        fig.add_annotation(
-            x=x1, y=y1, ax=x0, ay=y0,
-            xref="x", yref="y", axref="x", ayref="y",
-            showarrow=True,
-            arrowhead=3, arrowsize=1.5, arrowwidth=2,
-            arrowcolor="#888",
-            text="",
-        )
-        # edge label
-        fig.add_annotation(
-            x=(x0 + x1) / 2, y=(y0 + y1) / 2 + 0.06,
-            xref="x", yref="y",
-            text=label, showarrow=False,
-            font=dict(size=10, color="#aaa"),
-        )
-
-    # draw nodes as filled circles (shapes) + text labels
-    for x, y, label, color, size in nodes:
-        fig.add_shape(
-            type="circle",
-            xref="x", yref="y",
-            x0=x - 0.07, y0=y - 0.22,
-            x1=x + 0.07, y1=y + 0.22,
-            fillcolor=color, opacity=0.9,
-            line=dict(color="white", width=2),
-        )
-        fig.add_annotation(
-            x=x, y=y, xref="x", yref="y",
-            text=label.replace("\n", "<br>"),
-            showarrow=False,
-            font=dict(size=11, color="white"),
-            align="center",
-        )
-
-    fig.update_layout(
-        height=380,
-        paper_bgcolor="#0E1117",
-        plot_bgcolor="#0E1117",
-        xaxis=dict(visible=False, range=[-0.05, 1.05]),
-        yaxis=dict(visible=False, range=[-0.1, 1.0]),
-        margin=dict(l=0, r=0, t=20, b=0),
+    _NODE = (
+        "display:inline-block;padding:10px 14px;border-radius:8px;"
+        "text-align:center;font-size:13px;font-weight:600;color:#fff;"
+        "min-width:100px;line-height:1.4;"
     )
-    st.plotly_chart(fig, use_container_width=True)
+    _ARROW = "font-size:22px;color:#666;align-self:center;padding:0 4px;"
+    _DARROW = "font-size:18px;color:#666;align-self:center;padding:0 4px;"
+
+    st.markdown(
+        f"""
+<div style="display:flex;align-items:center;flex-wrap:nowrap;
+            padding:28px 20px;background:#161b22;border-radius:12px;
+            overflow-x:auto;gap:0px;">
+
+  <div style="{_NODE}background:#4A90D9;">User<br>Question</div>
+  <div style="{_ARROW}">&#8594;</div>
+  <div style="{_NODE}background:#7B68EE;">Embedding<br><small style='font-weight:400;font-size:11px'>nomic-embed-text</small></div>
+  <div style="{_ARROW}">&#8594;</div>
+  <div style="{_NODE}background:#E86B4F;">ChromaDB<br><small style='font-weight:400;font-size:11px'>Vector Store</small></div>
+  <div style="{_ARROW}">&#8594;</div>
+  <div style="{_NODE}background:#50C878;">Top-3<br>Retrieval</div>
+  <div style="{_ARROW}">&#8594;</div>
+
+  <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+    <div style="{_NODE}background:#888;font-size:11px;min-width:90px;padding:7px 10px;">
+      LangGraph<br>MemorySaver
+    </div>
+    <div style="color:#666;font-size:14px;">&#8597;</div>
+    <div style="{_NODE}background:#FFB347;">Mistral<br><small style='font-weight:400;font-size:11px'>LLM</small></div>
+  </div>
+
+  <div style="{_ARROW}">&#8594;</div>
+  <div style="{_NODE}background:#4A90D9;">Guru<br>Response</div>
+
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
     # LangGraph mermaid
     st.subheader("LangGraph State Machine")
