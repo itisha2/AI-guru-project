@@ -1,3 +1,4 @@
 .env
+.streamlit/secrets.toml
 data/raw/          # skip raw source files — index is pre-built in data/chroma_db/
 data/processed/    # skip intermediate parsed cache
