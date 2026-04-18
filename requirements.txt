@@ -13,6 +13,9 @@ sentence-transformers>=3.0.0
 # Groq — free, fast LLM inference (Gemma, Llama, Mixtral)
 langchain-groq>=0.2.0
 
+# required by nomic-embed-text-v1.5 trust_remote_code
+einops>=0.7.0
+
 # PyTorch CPU-only (lighter image for Render)
 torch>=2.2.0
 torchvision

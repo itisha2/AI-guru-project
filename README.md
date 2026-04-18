@@ -1,3 +1,14 @@
+---
+title: AI Guru
+emoji: 🧠
+colorFrom: purple
+colorTo: indigo
+sdk: streamlit
+sdk_version: 1.39.0
+app_file: frontend/app.py
+pinned: false
+---
+
 # AI Guru — Handy Philosopher in Your Pocket
 
 > *"The wisdom informs the answer, not the vocabulary."*
@@ -101,28 +112,28 @@ class GururState(TypedDict):
 
 | Layer | Technology | Notes |
 |---|---|---|
-| LLM | Mistral 7B via Ollama | Fully local / offline |
-| Embeddings | nomic-embed-text via Ollama | 768-dim, optimised for RAG |
+| LLM | `llama-3.1-8b-instant` via Groq API | Free, fast cloud inference |
+| Embeddings | `nomic-ai/nomic-embed-text-v1.5` via HuggingFace | 768-dim, runs locally on CPU |
 | RAG orchestration | LangGraph | Typed state machine |
 | Conversation memory | LangGraph MemorySaver | Per-thread checkpointing |
-| LLM framework | LangChain + langchain-ollama | Retrieval + prompt assembly |
+| LLM framework | LangChain + langchain-groq | Retrieval + prompt assembly |
 | Vector store | ChromaDB (persistent) | Cosine similarity, disk-backed |
-| Frontend | Streamlit (multi-page app) | 3 pages |
+| Frontend | Streamlit (multi-page app) | 4 pages |
 | Visualization | Plotly + UMAP | Interactive 2-D embedding projection |
-| HuggingFace datasets | `datasets` library | Datasets 4, 5, 6 |
-| Data helpers | PyYAML, requests, GitPython | Datasets 1, 2, 3 |
+| HuggingFace datasets | `datasets` library | Datasets 4–7 |
+| Data helpers | PyYAML, requests, GitPython | Datasets 1–3 |
 
-### Why Mistral?
+### Why Groq?
 
-Mistral 7B balances reasoning quality and local inference speed. Its strong
-instruction-following makes the system prompt reliably shape the "wise teacher,
-not scripture reciter" persona.
+Groq's free API tier provides fast LLaMA 3.1 inference with no GPU required locally.
+`llama-3.1-8b-instant` has strong instruction-following, making the system prompt
+reliably shape the "practical advisor, not scripture reciter" persona.
 
-### Why nomic-embed-text?
+### Why nomic-embed-text-v1.5?
 
 Purpose-built for retrieval (8192 context window, 768 dims). Significantly
-outperforms `all-MiniLM` on philosophical/semantic queries and runs efficiently
-alongside the main LLM via Ollama.
+outperforms `all-MiniLM` on philosophical/semantic queries. Runs on CPU via
+HuggingFace `sentence-transformers` — no Ollama required.
 
 ### Why ChromaDB?
 
@@ -141,9 +152,10 @@ with relevance grading, re-ranking, or self-critique nodes.
 
 ## Datasets
 
-Six open-source Gita datasets are ingested, merged, and indexed into a single
-ChromaDB collection. Every document retains a `source` metadata tag so the
-Guru can attribute each retrieved passage back to its origin dataset.
+Seven open-source Gita datasets are ingested, merged, and indexed into a single
+ChromaDB collection (**13,307 documents total**). Every document retains a `source`
+metadata tag so the provenance trail can attribute each retrieved passage back to
+its origin dataset.
 
 ---
 
@@ -309,6 +321,32 @@ Metadata: `source`, `chapter`, `verse`, `source_label`
 
 ---
 
+### Dataset 7 — JDhruv14/Bhagavad-Gita\_Dataset (HuggingFace)
+
+| | |
+|---|---|
+| **Source tag** | `jdhruv14_dataset` |
+| **URL** | https://huggingface.co/datasets/JDhruv14/Bhagavad-Gita_Dataset |
+| **Type** | Structured verse dataset |
+| **Format** | HuggingFace dataset (downloaded via `datasets` library) |
+
+**What it contains:**
+Verse-level dataset with chapter/verse coordinates, Sanskrit text, and English
+translation. Adds an additional translation layer and increases retrieval recall
+for paraphrased queries not captured by earlier datasets.
+
+**How it's organised:**
+Loaded via `datasets.load_dataset("JDhruv14/Bhagavad-Gita_Dataset", split="train")`.
+Cached to `data/raw/jdhruv14_dataset.json` after first download.
+Columns: `chapter_no`, `verse_no`, `translation` (and optional Sanskrit fields).
+
+**How it's indexed:**
+One document per verse.
+`page_content` = `"Chapter N, Verse V\n\n{translation}"`
+Metadata: `source`, `chapter`, `verse`
+
+---
+
 ## How Indexing Works
 
 ### Pipeline
@@ -337,7 +375,7 @@ Raw data (YAML / JSON / HuggingFace)
    (page_content + metadata{chapter, verse, sources, sanskrit, transliteration})
            │
            ▼
-   OllamaEmbeddings(nomic-embed-text)  →  768-dim vector per document
+   HuggingFaceEmbeddings(nomic-embed-text-v1.5)  →  768-dim vector per document
            │
            ▼
    ChromaDB  →  persisted at data/chroma_db/
@@ -346,15 +384,17 @@ Raw data (YAML / JSON / HuggingFace)
 
 ### Index organisation
 
-| Index key | Document type | Approximate count | Description |
-|-----------|--------------|-------------------|-------------|
-| `(chapter=N, verse=V)` | Merged verse | ~700 | One document per Gita verse. Content from all contributing datasets merged. Metadata: `chapter`, `verse`, `sources` (comma-separated), `sanskrit`, `transliteration`. |
-| `(chapter=0)` | Q&A / unlocated | ~6,300 | Standalone Q&A pairs not linked to a specific verse. Metadata: `source`, `question`. |
+| Index key | Document type | Count | Description |
+|-----------|--------------|-------|-------------|
+| `(chapter=N, verse=V)` | Merged verse | ~701 | One document per unique Gita verse (Ch. 1–18). Content from all contributing datasets merged into a single rich document. |
+| `(chapter=N, verse=V)` | Individual verse | ~6,303 | Individual verse docs kept alongside merged versions to improve retrieval diversity. |
+| `(chapter=0)` | Q&A / unlocated | ~6,303 | Standalone Q&A pairs not linked to a specific verse. Indexed by semantic content only. |
 
-**Total indexed:** ~7,000 documents
+**Total indexed:** 13,307 documents
 
 **Embedding:** Each document's `page_content` is embedded as a single 768-dimensional
-vector using `nomic-embed-text` via Ollama. Similarity search uses **cosine distance**.
+vector using `nomic-ai/nomic-embed-text-v1.5` via HuggingFace `sentence-transformers`.
+Similarity search uses **cosine distance**.
 
 **Merge strategy:** When multiple datasets cover the same verse (e.g. Ch. 2, V. 47),
 their translations and commentary are concatenated under labelled sections
@@ -385,33 +425,29 @@ ai-guru/
 │
 ├── backend/
 │   ├── __init__.py
-│   ├── config.py               # Paths, env vars, system prompt, OLLAMA URLs
-│   ├── data_loader.py          # Six dataset loaders + DATASET_REGISTRY dict
+│   ├── config.py               # Paths, env vars, system prompt, model names
+│   ├── data_loader.py          # Seven dataset loaders + DATASET_REGISTRY dict
 │   ├── rag_graph.py            # LangGraph RAG pipeline (retrieve → generate)
-│   └── vector_store.py         # ChromaDB wrapper (create, load, search, stats)
+│   └── vector_store.py         # ChromaDB wrapper (create, load, search, browse, stats)
 │
 ├── frontend/
-│   ├── app.py                  # Streamlit home page — setup check + project overview
+│   ├── app.py                  # Streamlit home page — project overview
 │   └── pages/
 │       ├── 1_Chat.py           # Conversational interface + Answer Provenance Trail
 │       ├── 2_Knowledge_Base.py # Dataset cards + semantic search browser
-│       └── 3_Visualize.py      # Pipeline diagram, UMAP vector space, retrieval inspector
+│       ├── 3_Visualize.py      # Pipeline diagram, UMAP vector space, retrieval inspector
+│       └── 4_ChromaDB_Browser.py  # MongoDB-style document explorer for the vector store
 │
 ├── scripts/
-│   └── ingest_data.py          # One-time: download all 6 datasets + index ChromaDB
+│   └── ingest_data.py          # One-time: download all 7 datasets + index ChromaDB
 │
-├── data/                       # Created at runtime (git-ignored)
-│   ├── raw/
-│   │   ├── gita/               # Cloned gita/gita GitHub repo
-│   │   ├── Shrimad-bhagvad-gita.json  # Dataset 2 download
-│   │   ├── pranesh_verse.json  # Dataset 3 download
-│   │   ├── jdhruv14_qa.json    # Dataset 4 HF cache
-│   │   ├── utkarsh_gita.json   # Dataset 5 HF cache
-│   │   └── modotte_infinity.json  # Dataset 6 HF cache
-│   ├── processed/
-│   │   └── documents.json      # Merged, parsed document cache
-│   └── chroma_db/              # ChromaDB persisted vector store
+├── data/
+│   ├── raw/                    # git-ignored — re-downloaded on ingest
+│   ├── processed/              # git-ignored — intermediate parse cache
+│   └── chroma_db/              # committed to git — 13,307 docs, ~97 MB
 │
+├── .streamlit/
+│   └── config.toml             # Streamlit server config (headless, CORS off)
 ├── .env.example
 ├── requirements.txt
 └── README.md
@@ -424,13 +460,17 @@ ai-guru/
 ### Prerequisites
 
 - Python 3.10+
-- [Ollama](https://ollama.ai) installed and running
-- ~8 GB RAM (Mistral 7B + nomic-embed-text)
-- ~6 GB free disk space
+- A free [Groq API key](https://console.groq.com) (LLM inference)
+- A free [HuggingFace token](https://huggingface.co/settings/tokens) (dataset downloads)
+- ~2 GB RAM, ~500 MB disk
 
-### 1. Create a virtual environment
+No Ollama. No local GPU. Everything runs on CPU.
+
+### 1. Clone and create a virtual environment
 
 ```bash
+git clone https://github.com/YOUR_USERNAME/ai-guru.git
+cd ai-guru
 python -m venv .venv
 source .venv/bin/activate      # macOS / Linux
 # .venv\Scripts\activate       # Windows
@@ -442,28 +482,21 @@ source .venv/bin/activate      # macOS / Linux
 pip install -r requirements.txt
 ```
 
-### 3. Pull Ollama models
-
-```bash
-ollama pull mistral             # ~4 GB — the LLM brain
-ollama pull nomic-embed-text    # ~270 MB — the embedding model
-```
-
-### 4. Configure environment (optional)
+### 3. Configure environment
 
 ```bash
 cp .env.example .env
-# Edit .env if you use a non-default Ollama URL or different models
 ```
 
-`.env` variables:
+Edit `.env`:
 ```
-OLLAMA_BASE_URL=http://localhost:11434
-LLM_MODEL=mistral
-EMBEDDING_MODEL=nomic-embed-text
+GROQ_API_KEY=gsk_...
+HUGGINGFACEHUB_API_TOKEN=hf_...
+LLM_MODEL=llama-3.1-8b-instant
+EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5
 ```
 
-### 5. Ingest all six datasets
+### 4. Ingest all seven datasets
 
 ```bash
 python scripts/ingest_data.py
@@ -476,13 +509,14 @@ This will sequentially:
 4. Download `JDhruv14/Bhagavad-Gita-QA` via `datasets` library
 5. Download `utkarshpophli/bhagwat_gita` via `datasets` library
 6. Download `Modotte/Bhagwat-Gita-Infinity` via `datasets` library
-7. Embed all documents with `nomic-embed-text` (batched, 100 at a time)
-8. Persist the ChromaDB collection to `data/chroma_db/`
+7. Download `JDhruv14/Bhagavad-Gita_Dataset` via `datasets` library
+8. Embed all 13,307 documents with `nomic-embed-text-v1.5` (batched, CPU)
+9. Persist the ChromaDB collection to `data/chroma_db/`
 
-First run: ~10–30 minutes depending on network and hardware.
+First run: ~15–30 minutes (embedding 13k docs on CPU).
 Re-index from scratch: `python scripts/ingest_data.py --force`
 
-### 6. Start the app
+### 5. Start the app
 
 ```bash
 streamlit run frontend/app.py
@@ -503,8 +537,9 @@ response grounded in Gita wisdom — spoken in plain English.
 After every response, expand the provenance panel to see the full RAG trace:
 
 - **Step 1 — Query Encoding:** embedding model, query text
-- **Step 2 — Vector Retrieval:** ranked list of retrieved passages with similarity
-  scores, chapter/verse location, and which of the 6 datasets they came from
+- **Step 2 — Vector Retrieval:** ranked list of 5 retrieved passages with similarity
+  scores, chapter/verse location, dataset source, and a direct link to the raw
+  document in the ChromaDB Browser
 - **Step 3 — Context Assembly:** the exact context block that was sent to the LLM,
   expandable for inspection
 - **Step 4 — Generation:** LLM model, temperature, session thread ID
@@ -513,21 +548,29 @@ After every response, expand the provenance panel to see the full RAG trace:
 
 Browse and understand the indexed content:
 - **Dataset cards:** description, schema, indexing approach, URL, and document count
-  for each of the 6 datasets
+  for each of the 7 datasets
 - **Chapter distribution chart:** documents per Gita chapter across all verse datasets
 - **Source distribution table:** document counts and percentages per dataset
-- **Semantic search:** natural-language search across all 6 datasets simultaneously,
+- **Semantic search:** natural-language search across all 7 datasets simultaneously,
   results ranked by cosine similarity with source attribution
 
 ### 🔬 Visualize (`pages/3_Visualize.py`)
 
 Three interactive views:
-- **RAG Pipeline tab:** Plotly network graph of the full data flow + LangGraph
-  state machine Mermaid diagram + state schema
+- **RAG Pipeline tab:** HTML pipeline diagram (User → Embedding → ChromaDB → LLM → Response) + LangGraph state machine diagram
 - **Vector Space tab:** UMAP 2-D projection of all document embeddings, coloured
   by chapter. Hover to see text previews. Semantic clusters emerge naturally.
 - **Retrieval Inspector tab:** Enter any query, see retrieved documents ranked
   by similarity score rendered as a colour-coded bar chart
+
+### 🗄️ ChromaDB Browser (`pages/4_ChromaDB_Browser.py`)
+
+MongoDB Compass-style document explorer for the vector store:
+- **Index overview:** total documents, verse docs, Q&A docs, chapters covered
+- **Paginated document cards:** browse all 13,307 documents with metadata
+- **Filters:** by chapter, verse number, keyword, source
+- **Direct ID lookup:** paste a ChromaDB document ID to jump straight to it
+  (linked from the Answer Provenance Trail in Chat)
 
 ---
 
@@ -540,27 +583,26 @@ exposes the complete RAG pipeline trace for each response:
 User query: "How do I stop being afraid of failure?"
     │
     ├─ Step 1: Embedding
-    │    model: nomic-embed-text → 768-dim vector
+    │    model: nomic-embed-text-v1.5 → 768-dim vector
     │
     ├─ Step 2: Retrieval (ChromaDB cosine similarity, k=5)
-    │    #1  🟢 0.823  Ch.2 V.47   [🟩 gita_yaml]
-    │    #2  🟢 0.771  Ch.18 V.66  [🟥 utkarsh_gita]
-    │    #3  🟡 0.654  Q&A entry   [🟦 alpaca_qa]
-    │    #4  🟡 0.621  Ch.3 V.19   [🟧 pranesh_json]
-    │    #5  🔴 0.498  Ch.6 V.5    [🟪 jdhruv14_qa]
+    │    #1  🟢 0.823  Ch.2 V.47   [🟩 gita_yaml]      🔗 View in Browser
+    │    #2  🟢 0.771  Ch.18 V.66  [🟥 utkarsh_gita]   🔗 View in Browser
+    │    #3  🟡 0.654  Q&A entry   [🟦 alpaca_qa]       🔗 View in Browser
+    │    #4  🟡 0.621  Ch.3 V.19   [🟧 pranesh_json]    🔗 View in Browser
+    │    #5  🔴 0.498  Ch.6 V.5    [🟪 jdhruv14_qa]     🔗 View in Browser
     │
     ├─ Step 3: Context assembly
-    │    5 passages formatted as [Gita Ch.X V.Y]\n{text}
-    │    prepended to system prompt as grounding context
+    │    5 passages (500 chars each) prepended to system prompt
     │
     └─ Step 4: Generation
-         model: mistral  temperature: 0.7
+         model: llama-3.1-8b-instant (Groq)  temperature: 0.7
          session thread: abc12345…
 ```
 
 Similarity score legend: 🟢 > 0.7 (high) · 🟡 > 0.5 (medium) · 🔴 ≤ 0.5 (low)
 
-Dataset colour legend: 🟩 gita_yaml · 🟦 alpaca_qa · 🟧 pranesh_json · 🟪 jdhruv14_qa · 🟥 utkarsh_gita · 🟨 modotte_infinity
+Dataset colour legend: 🟩 gita_yaml · 🟦 alpaca_qa · 🟧 pranesh_json · 🟪 jdhruv14_qa · 🟥 utkarsh_gita · 🟨 modotte_infinity · 🟫 jdhruv14_dataset
 
 ---
 
@@ -568,10 +610,10 @@ Dataset colour legend: 🟩 gita_yaml · 🟦 alpaca_qa · 🟧 pranesh_json · 
 
 ### Retrieval-Augmented Generation (RAG)
 
-RAG anchors the LLM's responses in actual source material. Without RAG, Mistral
+RAG anchors the LLM's responses in actual source material. Without RAG, the model
 answers from general training knowledge — vague and inconsistent with the Gita's
-specific teachings. With RAG, the 5 most relevant Gita passages are injected as
-context, grounding every response.
+specific teachings. With RAG, the 5 most relevant passages are injected as context,
+grounding every response in a specific verse or teaching.
 
 ### Semantic Search vs. Keyword Search
 
@@ -587,7 +629,7 @@ Example:
 
 ### Multi-Dataset Retrieval
 
-Having 6 datasets with different phrasings, formats, and source translations means:
+Having 7 datasets with different phrasings, formats, and source translations means:
 - The same verse concept appears in multiple phrasings → higher chance of matching any user query
 - Q&A datasets (alpaca, jdhruv14) match conversational questions directly
 - Verse datasets (yaml, pranesh, utkarsh) match topical/thematic queries
@@ -599,6 +641,37 @@ Each node in the graph is a pure function that reads/writes typed state keys.
 `MemorySaver` checkpoints the full state after every turn, keyed by `thread_id`.
 New messages are appended to existing history — giving the LLM full multi-turn
 context without any hidden state.
+
+---
+
+## Deployment
+
+### Streamlit Community Cloud (recommended — free, no card)
+
+1. Push this repo to GitHub (the `data/chroma_db/` folder must be committed — it's ~97 MB and already included)
+2. Go to [share.streamlit.io](https://share.streamlit.io) → **New app**
+3. Set **Main file path** to `frontend/app.py`
+4. Under **Advanced settings → Secrets**, add:
+   ```toml
+   GROQ_API_KEY = "gsk_..."
+   HUGGINGFACEHUB_API_TOKEN = "hf_..."
+   EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
+   ```
+5. Deploy — the pre-built index is cloned with the repo, so no ingestion runs on startup
+
+### HuggingFace Spaces (free, no card)
+
+1. Create a new Space at [huggingface.co/spaces](https://huggingface.co/spaces) — SDK: **Streamlit**
+2. Push the repo to the Space's git remote (`https://huggingface.co/spaces/USERNAME/ai-guru`)
+3. Add `GROQ_API_KEY` and `HUGGINGFACEHUB_API_TOKEN` under **Settings → Repository secrets**
+4. HuggingFace handles Git LFS automatically for large files
+
+### Railway ($5/mo free credit, persistent disk)
+
+1. Connect GitHub repo at [railway.app](https://railway.app)
+2. Set start command: `python scripts/ingest_data.py && streamlit run frontend/app.py --server.port $PORT --server.address 0.0.0.0`
+3. Add env vars: `GROQ_API_KEY`, `HUGGINGFACEHUB_API_TOKEN`
+4. Add a volume mounted at `/app/data` for persistent ChromaDB storage
 
 ---
 
