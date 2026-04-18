@@ -12,8 +12,20 @@ CHROMA_DB_DIR = DATA_DIR / "chroma_db"
 for d in [RAW_DATA_DIR, PROCESSED_DATA_DIR, CHROMA_DB_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-HUGGINGFACEHUB_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN", "")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+def _secret(key: str, default: str = "") -> str:
+    """Read from env var, then st.secrets (Streamlit Cloud), then default."""
+    val = os.getenv(key, "")
+    if not val:
+        try:
+            import streamlit as st
+            val = st.secrets.get(key, default)
+        except Exception:
+            val = default
+    return val
+
+
+HUGGINGFACEHUB_API_TOKEN = _secret("HUGGINGFACEHUB_API_TOKEN")
+GROQ_API_KEY = _secret("GROQ_API_KEY")
 
 # LLM via Groq (free, fast) — llama-3.1-8b-instant: Gemma 2 9B, strong reasoning, multilingual
 LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
