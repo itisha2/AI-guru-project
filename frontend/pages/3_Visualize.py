@@ -57,11 +57,11 @@ with tab1:
 
   <div style="{_NODE}background:#4A90D9;">User<br>Question</div>
   <div style="{_ARROW}">&#8594;</div>
-  <div style="{_NODE}background:#7B68EE;">Embedding<br><small style='font-weight:400;font-size:11px'>nomic-embed-text</small></div>
+  <div style="{_NODE}background:#7B68EE;">Embedding<br><small style='font-weight:400;font-size:11px'>nomic-embed-text-v1.5</small></div>
   <div style="{_ARROW}">&#8594;</div>
-  <div style="{_NODE}background:#E86B4F;">ChromaDB<br><small style='font-weight:400;font-size:11px'>Vector Store</small></div>
+  <div style="{_NODE}background:#E86B4F;">ChromaDB<br><small style='font-weight:400;font-size:11px'>13,307 docs</small></div>
   <div style="{_ARROW}">&#8594;</div>
-  <div style="{_NODE}background:#50C878;">Top-3<br>Retrieval</div>
+  <div style="{_NODE}background:#50C878;">Top-5<br>Retrieval</div>
   <div style="{_ARROW}">&#8594;</div>
 
   <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
@@ -69,7 +69,7 @@ with tab1:
       LangGraph<br>MemorySaver
     </div>
     <div style="color:#666;font-size:14px;">&#8597;</div>
-    <div style="{_NODE}background:#FFB347;">Mistral<br><small style='font-weight:400;font-size:11px'>LLM</small></div>
+    <div style="{_NODE}background:#FFB347;">LLaMA 3.1 8B<br><small style='font-weight:400;font-size:11px'>via Groq</small></div>
   </div>
 
   <div style="{_ARROW}">&#8594;</div>
@@ -87,9 +87,9 @@ with tab1:
 ```mermaid
 graph LR
     START([__start__]) --> retrieve
-    retrieve["🔍 retrieve<br/>(ChromaDB similarity search)"]
+    retrieve["🔍 retrieve<br/>(ChromaDB · top-5 · cosine similarity)"]
     retrieve --> generate
-    generate["🤖 generate<br/>(Mistral LLM + system prompt)"]
+    generate["🤖 generate<br/>(LLaMA 3.1 8B via Groq + system prompt)"]
     generate --> END([__end__])
 
     memory["💾 MemorySaver<br/>(per-thread checkpointer)"]

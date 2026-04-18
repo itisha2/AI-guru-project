@@ -31,8 +31,9 @@ Welcome to **AI Guru** — a wisdom companion grounded in the **Bhagavad Gita**.
 ### What is AI Guru?
 
 AI Guru is a **Retrieval-Augmented Generation (RAG)** system powered by:
-- **Mistral** (via Ollama) as the language brain
-- **ChromaDB** as the vector knowledge base
+- **LLaMA 3.1 8B** (via Groq API) as the language brain
+- **nomic-embed-text-v1.5** (via HuggingFace) as the embedding model
+- **ChromaDB** as the vector knowledge base — 13,307 documents indexed
 - **LangGraph** for orchestration and conversation memory
 - **LangChain** for the RAG pipeline
 
@@ -48,6 +49,7 @@ inner conflicts — not for factual lookups.
 | 💬 **Chat** | Converse with the Guru |
 | 📚 **Knowledge Base** | Browse and search indexed Gita content |
 | 🔬 **Visualize** | Explore the vector space and RAG pipeline |
+| 🗄️ **ChromaDB Browser** | Inspect raw documents in the vector store |
 
 ---
 
